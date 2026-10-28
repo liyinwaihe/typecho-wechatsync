@@ -1,0 +1,10 @@
+# Runtime cache (access token, logs) — keep the directory but not its contents
+WeChatSync/cache/*
+!WeChatSync/cache/.htaccess
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
