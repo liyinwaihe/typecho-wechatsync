@@ -68,19 +68,39 @@ class WeChatSync_Notifier
     }
 
     /**
-     * 解析已启用渠道（notifyChannels 为逗号分隔字符串或数组）
+     * 解析已启用渠道（兼容数组、逗号/空格分隔字符串、JSON 字符串等存储形态）
      *
      * @return array
      */
     protected function enabledChannels()
     {
+        $valid = array('wechat', 'serverchan', 'wecom', 'bark', 'webhook');
         $raw = isset($this->cfg->notifyChannels) ? $this->cfg->notifyChannels : '';
+
         if (is_array($raw)) {
             $list = $raw;
         } else {
-            $list = preg_split('/[\s,]+/', (string) $raw, -1, PREG_SPLIT_NO_EMPTY);
+            $raw = trim((string) $raw);
+            if ($raw === '') {
+                return array();
+            }
+            // 兼容以 JSON 数组形式存储（如 ["wecom","webhook"]）
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                $list = $decoded;
+            } else {
+                $list = preg_split('/[\s,]+/', $raw, -1, PREG_SPLIT_NO_EMPTY);
+            }
         }
-        return array_values(array_intersect(array('wechat', 'serverchan', 'wecom', 'bark', 'webhook'), $list));
+
+        $picked = array();
+        foreach ((array) $list as $item) {
+            $item = trim((string) $item);
+            if (in_array($item, $valid, true) && !in_array($item, $picked, true)) {
+                $picked[] = $item;
+            }
+        }
+        return $picked;
     }
 
     /**
@@ -153,15 +173,63 @@ class WeChatSync_Notifier
                 if ($url === '') {
                     throw new Exception('自定义 Webhook 未配置');
                 }
-                $this->httpJson($url, array(
-                    'title'   => $title,
-                    'content' => $body,
-                    'link'    => $link,
-                    'source'  => 'WeChatSync',
-                ), 'webhook');
+                $payload = $this->buildWebhookPayload($url, $title, $body, $link);
+                $kind = $payload['_kind'];
+                unset($payload['_kind']);
+                $this->httpJson($url, $payload, $kind);
                 return true;
         }
         return false;
+    }
+
+    /**
+     * 根据 webhook 地址特征构造兼容载荷：
+     * - 企业微信群机器人（qyapi.weixin.qq.com/.../webhook/send）→ {msgtype:markdown,...}
+     * - 钉钉机器人（oapi.dingtalk.com/robot/send）→ {msgtype:markdown,...}
+     * - 其他 → 通用 JSON {title,content,link,source}
+     *
+     * @return array
+     */
+    protected function buildWebhookPayload($url, $title, $body, $link)
+    {
+        $host = strtolower(parse_url($url, PHP_URL_HOST) ?: '');
+
+        if (strpos($host, 'qyapi.weixin.qq.com') !== false
+            && stripos($url, '/webhook/send') !== false) {
+            // 企业微信群机器人
+            $md = "**" . $title . "**\n" . $body;
+            if ($link !== '') {
+                $md .= "\n[点此前往](" . $link . ")";
+            }
+            return array(
+                '_kind'    => 'wecom',
+                'msgtype'  => 'markdown',
+                'markdown' => array('content' => $md),
+            );
+        }
+
+        if (strpos($host, 'oapi.dingtalk.com') !== false
+            && stripos($url, '/robot/send') !== false) {
+            // 钉钉群机器人
+            $md = "### " . $title . "\n\n" . $body;
+            if ($link !== '') {
+                $md .= "\n\n[点此前往](" . $link . ")";
+            }
+            return array(
+                '_kind'    => 'dingtalk',
+                'msgtype'  => 'markdown',
+                'markdown' => array('title' => $title, 'text' => $md),
+            );
+        }
+
+        // 通用自定义端点
+        return array(
+            '_kind'  => 'webhook',
+            'title'   => $title,
+            'content' => $body,
+            'link'    => $link,
+            'source'  => 'WeChatSync',
+        );
     }
 
     /**
@@ -207,9 +275,11 @@ class WeChatSync_Notifier
 
         switch ($channel) {
             case 'wecom':
-                // 成功 {"errcode":0,"errmsg":"ok"}
+            case 'dingtalk':
+                // 成功 {"errcode":0,"errmsg":"ok"}（企业微信、钉钉一致）
                 if (isset($data['errcode']) && intval($data['errcode']) !== 0) {
-                    throw new Exception('[企业微信 ' . $data['errcode'] . '] ' . $msg);
+                    $label = $channel === 'dingtalk' ? '钉钉' : '企业微信';
+                    throw new Exception('[' . $label . ' ' . $data['errcode'] . '] ' . $msg);
                 }
                 break;
             case 'serverchan':

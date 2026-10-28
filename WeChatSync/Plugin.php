@@ -11,7 +11,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) {
  *
  * @package WeChatSync
  * @author  WorkBuddy
- * @version 1.1.1
+ * @version 1.1.2
  * @link    https://www.workbuddy.cn
  * @since   1.1.0
  * @dependence 1.1.0-*
@@ -253,7 +253,7 @@ class WeChatSync_Plugin implements Typecho_Plugin_Interface
             null,
             '',
             _t('自定义 Webhook URL'),
-            _t('将以 JSON POST 发送 {title, content, link, source}，可对接自建服务/n8n/钉钉等。')
+            _t('通用端点：以 JSON POST 发送 {title, content, link, source}。注意：企业微信群机器人请勾选上方「企业微信群机器人」并填到其专用栏；若把企业微信/钉钉机器人地址误填到这里，插件也会自动识别并转换格式。')
         );
         $form->addInput($webhookUrl);
 
