@@ -300,6 +300,55 @@ class WeChatSync_Api
     }
 
     /**
+     * 推断上传文件的 MIME 类型（微信 multipart 上传需与真实内容一致）
+     *
+     * @param string $filePath
+     * @return string
+     */
+    protected function mimeOf($filePath)
+    {
+        static $map = array(
+            'png'  => 'image/png',
+            'jpg'  => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'gif'  => 'image/gif',
+            'bmp'  => 'image/bmp',
+        );
+
+        // 1) 文件头嗅探（最可靠）
+        $fh = @fopen($filePath, 'rb');
+        if ($fh) {
+            $head = (string) fread($fh, 12);
+            fclose($fh);
+            if (substr($head, 0, 8) === "\x89PNG\r\n\x1a\n") {
+                return 'image/png';
+            }
+            if (substr($head, 0, 3) === "\xff\xd8\xff") {
+                return 'image/jpeg';
+            }
+            if (substr($head, 0, 6) === 'GIF87a' || substr($head, 0, 6) === 'GIF89a') {
+                return 'image/gif';
+            }
+        }
+
+        // 2) finfo
+        if (function_exists('finfo_open')) {
+            $fi = @finfo_open(FILEINFO_MIME_TYPE);
+            if ($fi) {
+                $m = @finfo_file($fi, $filePath);
+                finfo_close($fi);
+                if (is_string($m) && strpos($m, 'image/') === 0) {
+                    return $m;
+                }
+            }
+        }
+
+        // 3) 扩展名兜底
+        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        return isset($map[$ext]) ? $map[$ext] : 'application/octet-stream';
+    }
+
+    /**
      * multipart/form-data 上传；token 失效自动刷新重试一次
      *
      * @param string $url
@@ -317,12 +366,15 @@ class WeChatSync_Api
             throw new Exception('待上传文件不可读：' . $filePath);
         }
 
-        $do = function ($requestUrl) use ($filePath, $field) {
+        $mime = $this->mimeOf($filePath);
+
+        $do = function ($requestUrl) use ($filePath, $field, $mime) {
             $ch = curl_init($requestUrl);
+            $name = basename($filePath);
             if (class_exists('CURLFile')) {
-                $postFields = array($field => new CURLFile($filePath));
+                $postFields = array($field => new CURLFile($filePath, $mime, $name));
             } else {
-                $postFields = array($field => '@' . $filePath);
+                $postFields = array($field => '@' . $filePath . ';type=' . $mime);
             }
             curl_setopt_array($ch, array(
                 CURLOPT_RETURNTRANSFER => true,

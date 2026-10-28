@@ -11,7 +11,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) {
  *
  * @package WeChatSync
  * @author  WorkBuddy
- * @version 1.0.0
+ * @version 1.1.1
  * @link    https://www.workbuddy.cn
  * @since   1.1.0
  * @dependence 1.1.0-*

@@ -309,7 +309,7 @@ class WeChatSync_Sync
             CURLOPT_MAXREDIRS      => 3,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => false,
-            CURLOPT_USERAGENT      => 'Mozilla/5.0 (compatible; WeChatSync/1.0)',
+            CURLOPT_USERAGENT      => 'Mozilla/5.0 (compatible; WeChatSync/1.1)',
         ));
         $ok = curl_exec($ch);
         $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -321,7 +321,69 @@ class WeChatSync_Sync
             @unlink($tmp);
             throw new Exception('图片下载失败（HTTP ' . $http . '）' . ($err !== '' ? '：' . $err : '') . ' ' . $url);
         }
-        return $tmp;
+
+        // 微信按文件名后缀与内容判断媒体类型；无后缀的临时文件会被拒（40005）。
+        // 依据文件头识别真实格式，重命名为带正确扩展名的文件。
+        $ext = $this->sniffImageExt($tmp, $url);
+        if ($ext === null) {
+            @unlink($tmp);
+            throw new Exception('图片格式无法识别（仅支持 png/jpeg/jpg/gif）' . ' ' . $url);
+        }
+
+        $named = $tmp . '.' . $ext;
+        if (!@rename($tmp, $named)) {
+            // rename 失败（如跨设备/权限）时退回复制
+            if (!@copy($tmp, $named)) {
+                @unlink($tmp);
+                throw new Exception('临时文件重命名失败 ' . $url);
+            }
+            @unlink($tmp);
+        }
+        return $named;
+    }
+
+    /**
+     * 识别图片真实格式：文件头优先，URL 后缀兜底
+     * 返回扩展名（png/jpg/gif）或 null（不支持）
+     *
+     * @param string $file
+     * @param string $url
+     * @return string|null
+     */
+    protected function sniffImageExt($file, $url)
+    {
+        $head = '';
+        $fh = @fopen($file, 'rb');
+        if ($fh) {
+            $head = (string) fread($fh, 12);
+            fclose($fh);
+        }
+
+        if ($head !== '') {
+            if (substr($head, 0, 8) === "\x89PNG\r\n\x1a\n") {
+                return 'png';
+            }
+            if (substr($head, 0, 3) === "\xff\xd8\xff") {
+                return 'jpg';
+            }
+            if (substr($head, 0, 6) === 'GIF87a' || substr($head, 0, 6) === 'GIF89a') {
+                return 'gif';
+            }
+            // BMP/WebP 等微信不支持
+            if (substr($head, 0, 2) === 'BM' || substr($head, 8, 4) === 'WEBP') {
+                return null;
+            }
+        }
+
+        // 文件头不明确时按 URL 后缀兜底
+        $ext = strtolower(pathinfo(parse_url($url, PHP_URL_PATH), PATHINFO_EXTENSION));
+        if (in_array($ext, array('png', 'jpg', 'jpeg'), true)) {
+            return $ext === 'jpeg' ? 'jpg' : $ext;
+        }
+        if ($ext === 'gif') {
+            return 'gif';
+        }
+        return null;
     }
 
     /* -----------------------------------------------------------------
